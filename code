@@ -1,0 +1,196 @@
+import os
+import spotipy
+from spotipy.oauth2 import SpotifyClientCredentials
+import yt_dlp as youtube_dl
+import ctypes
+import threading
+import tkinter as tk
+from tkinter import ttk, messagebox
+import time
+
+# Prevent the system from sleeping
+ES_CONTINUOUS = 0x80000000
+ES_SYSTEM_REQUIRED = 0x00000001
+
+def prevent_sleep():
+    ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+
+def allow_sleep():
+    ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
+
+# Spotify API credentials
+client_id = 'YOUR CLIENT ID'
+client_secret = 'YOUR SPOTIFY SECRET'
+
+# Ensure the environment variables are set
+if not client_id or not client_secret:
+    raise Exception("Please set SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET environment variables")
+
+# Set up Spotipy client
+sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(client_id=client_id, client_secret=client_secret))
+
+def get_playlist_info(username, playlist_id):
+    playlist = sp.user_playlist(username, playlist_id)
+    return playlist['name'], playlist['tracks']['items']
+
+def get_playlist_tracks(username, playlist_id):
+    results = sp.user_playlist_tracks(username, playlist_id)
+    tracks = results['items']
+    while results['next']:
+        results = sp.next(results)
+        tracks.extend(results['items'])
+    return tracks
+
+def download_track(track_name, artist_name, download_dir):
+    sanitized_track_name = track_name.replace('/', '_').replace('\\', '_')
+    file_path = os.path.join(download_dir, f"{sanitized_track_name}.mp3")
+
+    if os.path.exists(file_path):
+        print(f"Skipping {track_name} by {artist_name}: already exists.")
+        return
+
+    query = f"{track_name} {artist_name} audio"
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'outtmpl': file_path,
+        'quiet': True
+    }
+    with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+        try:
+            ydl.download([f"ytsearch:{query}"])
+        except Exception as e:
+            print(f"Error downloading {track_name} by {artist_name}: {e}")
+
+def download_playlist(username, playlist_id, download_dir, progress_bar, progress_label, count_label, current_song_label, stop_event, pause_event):
+    playlist_name, tracks = get_playlist_info(username, playlist_id)
+    download_dir = os.path.join('downloaded_music', playlist_name)
+    if not os.path.exists(download_dir):
+        os.makedirs(download_dir)
+
+    total_tracks = len(tracks)
+    print(f"Files will be saved in: {os.path.abspath(download_dir)}")
+    progress_bar["maximum"] = total_tracks
+    for idx, item in enumerate(tracks):
+        if stop_event.is_set():
+            print("Download stopped.")
+            messagebox.showinfo("Info", "Download interrupted.")
+            os._exit(0)
+        while pause_event.is_set():
+            continue  # Paused
+
+        track = item['track']
+        track_name = track['name']
+        artist_name = track['artists'][0]['name']
+        current_song_label.config(text=f"Downloading: {track_name} by {artist_name}")
+        download_track(track_name, artist_name, download_dir)
+        progress_bar["value"] = idx + 1
+        progress_percent = ((idx + 1) / total_tracks) * 100
+        progress_label.config(text=f"Progress: {progress_percent:.2f}%")
+        count_label.config(text=f"Downloaded: {idx + 1}/{total_tracks}")
+        progress_bar.update()
+    else:
+        messagebox.showinfo("Success", "Playlist downloaded successfully!")
+        time.sleep(10)
+        allow_sleep()
+        root.destroy()
+
+# GUI application
+class SpotifyDownloaderApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Spotify Playlist Downloader")
+
+        self.stop_event = threading.Event()
+        self.pause_event = threading.Event()
+
+        self.create_widgets()
+
+    def create_widgets(self):
+        self.label = ttk.Label(self.root, text="Enter Playlist ID:")
+        self.label.pack(pady=10)
+
+        self.playlist_id_entry = ttk.Entry(self.root, width=50)
+        self.playlist_id_entry.pack(pady=10)
+
+        self.download_button = ttk.Button(self.root, text="Download Playlist", command=self.start_download)
+        self.download_button.pack(pady=5)
+
+        self.pause_button = ttk.Button(self.root, text="Pause", command=self.pause_download)
+        self.pause_button.pack(pady=5)
+        self.pause_button.pack_forget()
+
+        self.unpause_button = ttk.Button(self.root, text="Unpause", command=self.unpause_download)
+        self.unpause_button.pack(pady=5)
+        self.unpause_button.pack_forget()
+
+        self.stop_button = ttk.Button(self.root, text="Stop", command=self.stop_download)
+        self.stop_button.pack(pady=5)
+        self.stop_button.pack_forget()
+
+        self.progress_bar = ttk.Progressbar(self.root, orient="horizontal", length=400, mode="determinate")
+        self.progress_bar.pack(pady=10)
+        self.progress_bar.pack_forget()
+
+        self.progress_label = ttk.Label(self.root, text="Progress: 0.00%")
+        self.progress_label.pack(pady=5)
+        self.progress_label.pack_forget()
+
+        self.count_label = ttk.Label(self.root, text="Downloaded: 0/0")
+        self.count_label.pack(pady=5)
+        self.count_label.pack_forget()
+
+        self.current_song_label = ttk.Label(self.root, text="Downloading: None")
+        self.current_song_label.pack(pady=5)
+        self.current_song_label.pack_forget()
+
+    def start_download(self):
+        playlist_id = self.playlist_id_entry.get()
+        if playlist_id:
+            self.download_button.pack_forget()
+            self.label.pack_forget()
+            self.playlist_id_entry.pack_forget()
+            self.pause_button.pack(pady=5)
+            self.stop_button.pack(pady=5)
+            self.progress_bar.pack(pady=10)
+            self.progress_label.pack(pady=5)
+            self.count_label.pack(pady=5)
+            self.current_song_label.pack(pady=5)
+            self.stop_event.clear()
+            self.pause_event.clear()
+            self.download_thread = threading.Thread(target=download_playlist, args=(
+                'USERNAME', playlist_id, 'downloaded_music', self.progress_bar, self.progress_label, self.count_label, self.current_song_label, self.stop_event, self.pause_event))
+            prevent_sleep()
+            self.download_thread.start()
+        else:
+            messagebox.showwarning("Input Error", "Please enter a valid Playlist ID.")
+
+    def pause_download(self):
+        self.pause_event.set()
+        self.pause_button.pack_forget()
+        self.unpause_button.pack(pady=5)
+
+    def unpause_download(self):
+        self.pause_event.clear()
+        self.unpause_button.pack_forget()
+        self.pause_button.pack(pady=5)
+
+    def stop_download(self):
+        self.stop_event.set()
+        self.pause_event.clear()
+        self.pause_button.pack_forget()
+        self.unpause_button.pack_forget()
+        if self.download_thread.is_alive():
+            self.download_thread.join()
+        allow_sleep()
+        messagebox.showinfo("Info", "Download interrupted.")
+        os._exit(0)
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = SpotifyDownloaderApp(root)
+    root.mainloop()
