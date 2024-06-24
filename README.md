@@ -37,5 +37,9 @@ Here, you will see your Client ID and Client Secret.
 Copy Client ID and Client Secret:
 
 Copy these values. You'll need them to authenticate your application with Spotify. But do not delete the aplication afterwards, otherwise the values will be earead.
+Now you have to copy your PLAYLIST ID:
+First you should copy a link to the playlist. Then paste it somwhere and mark only the part from https://open.spotify.com/playlist/ to the first questions mark. That is your spotify playlist ID
+
+Lastly make sure that the playlist you want to export is public.
 
 Now run the program and enjoy it.
